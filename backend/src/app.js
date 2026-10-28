@@ -1,7 +1,6 @@
-// Seed do servidor backend do Document Management System.
+// Servidor backend do Document Management System.
 //
-// Este arquivo é apenas um ponto de partida mínimo. Ao longo do workshop você
-// vai usar o Agent Mode do GitHub Copilot para construir as camadas:
+// Camadas (Clean Architecture simples):
 //   - routes/       (definição das rotas)
 //   - controllers/  (entrada HTTP e validação)
 //   - services/     (regras de negócio)
@@ -12,18 +11,48 @@
 
 const express = require('express');
 
+const documentsRouter = require('./routes/documents.routes');
+const documentsRepository = require('./repositories/documents.repository');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Evita expor a stack via header X-Powered-By.
+app.disable('x-powered-by');
+
 app.use(express.json());
 
-// Endpoint de verificação de saúde. As demais rotas (/upload, /documents,
-// /documents/:id/download) serão implementadas durante o Passo 2.
+// Impede que navegadores "adivinhem" o tipo do conteúdo servido.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+});
+
+// Endpoint de verificação de saúde.
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Rotas de documentos: POST /upload, GET /documents,
+// GET /documents/:id/download.
+app.use(documentsRouter);
+
+// Rotas desconhecidas respondem JSON, seguindo o contrato de erro do sistema.
+app.use((req, res) => {
+  res.status(404).json({ error: 'Rota não encontrada.' });
+});
+
+// Tratador genérico de erros no limite do sistema.
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Erro interno do servidor.' });
+});
+
 if (require.main === module) {
+  // Metadados são voláteis: arquivos de execuções anteriores ficam órfãos
+  // e são removidos na inicialização para não acumular disco.
+  documentsRepository.removeOrphanFiles();
+
   app.listen(PORT, () => {
     console.log(`DMS backend ouvindo na porta ${PORT}`);
   });
