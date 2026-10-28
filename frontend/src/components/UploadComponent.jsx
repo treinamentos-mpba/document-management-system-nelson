@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 // Formulário de upload: seleciona o arquivo, informa o dono (opcional) e
 // delega o envio ao callback onUpload fornecido pelo componente pai.
 export default function UploadComponent({ onUpload }) {
+  const fileInputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [owner, setOwner] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -23,7 +24,9 @@ export default function UploadComponent({ onUpload }) {
       // Limpa o formulário após o envio bem-sucedido.
       setFile(null);
       setOwner('');
-      event.target.reset();
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -37,6 +40,7 @@ export default function UploadComponent({ onUpload }) {
         Arquivo:{' '}
         <input
           type="file"
+          ref={fileInputRef}
           onChange={(event) => setFile(event.target.files[0] ?? null)}
           disabled={submitting}
         />

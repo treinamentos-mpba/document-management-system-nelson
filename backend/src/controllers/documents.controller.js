@@ -1,5 +1,7 @@
-// Controller de documentos: trata entrada/saída HTTP e validação básica,
-// delegando as regras de negócio ao service.
+// Controller de documentos: trata entrada/saída HTTP, delegando as regras
+// de negócio (incluindo a política do campo dono) ao service. Erros de
+// validação lançados pelo service são convertidos em 400 pelo tratador de
+// erros registrado nas rotas.
 
 const documentsService = require('../services/documents.service');
 
@@ -20,7 +22,9 @@ function uploadDocument(req, res) {
 }
 
 function listDocuments(req, res) {
-  res.json(documentsService.listDocuments());
+  // Filtro opcional por dono (?owner=...). Apenas valores simples são aceitos.
+  const owner = typeof req.query.owner === 'string' ? req.query.owner : undefined;
+  res.json(documentsService.listDocuments(owner));
 }
 
 function downloadDocument(req, res) {

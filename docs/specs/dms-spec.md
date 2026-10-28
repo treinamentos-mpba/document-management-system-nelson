@@ -44,7 +44,7 @@ metadados mantidos em memória.
 | ------ | ------------------------------------------------------------------------------ |
 | RNF-01 | Arquivos gravados no filesystem local em `backend/storage` via `multer` com `diskStorage` |
 | RNF-02 | Metadados mantidos em memória (array no repositório) nesta fase                |
-| RNF-03 | Configuração via variáveis de ambiente (12-Factor): `PORT`, `STORAGE_DIR`      |
+| RNF-03 | Configuração via variáveis de ambiente (12-Factor): `PORT`, `STORAGE_DIR`, `MAX_FILE_SIZE_BYTES`, `ALLOWED_EXTENSIONS` |
 | RNF-04 | Backend em Clean Architecture simples: `routes -> controllers -> services -> repositories` |
 | RNF-05 | Erros tratados nos limites do sistema (entrada HTTP e I/O de arquivos)         |
 | RNF-06 | Nome físico do arquivo em disco é único (prefixo com id/timestamp) para evitar colisões |
@@ -87,15 +87,20 @@ backend diretamente.
 ### POST /upload
 
 - Entrada: `multipart/form-data`
-  - `file` (obrigatório): o arquivo a enviar
-  - `owner` (opcional): identificador textual do dono; padrão `"anonymous"`
+  - `file` (obrigatório): o arquivo a enviar (extensão deve constar na
+    allowlist configurada em `ALLOWED_EXTENSIONS`)
+  - `owner` (opcional): identificador textual do dono (máx. 100 caracteres);
+    padrão `"anonymous"`
 - Saída de sucesso: `201 Created` com os metadados públicos do documento
 - Erros:
   - `400 Bad Request` — `{ "error": "Nenhum arquivo foi enviado." }`
+  - `400 Bad Request` — `{ "error": "Tipo de arquivo não permitido." }`
+  - `400 Bad Request` — `{ "error": "Arquivo excede o tamanho máximo permitido." }`
+  - `400 Bad Request` — `{ "error": "O campo dono deve ter no máximo 100 caracteres." }`
 
 ### GET /documents
 
-- Entrada: nenhuma
+- Entrada: query string opcional `?owner=<dono>` para filtrar por dono
 - Saída de sucesso: `200 OK` com array de metadados públicos (ordenado por
   `uploadedAt` decrescente)
 
@@ -141,10 +146,13 @@ backend diretamente.
 | Risco                                                   | Mitigação                                                      |
 | ------------------------------------------------------- | -------------------------------------------------------------- |
 | Metadados perdidos ao reiniciar o servidor              | Aceitável nesta fase; repositório isolado facilita evolução    |
+| Arquivos órfãos acumulando em disco após restart        | Limpeza de arquivos sem metadado na inicialização do servidor  |
 | Colisão de nomes de arquivos em disco                   | Nome físico único (id/timestamp + nome sanitizado)             |
 | Upload de arquivos muito grandes                        | Limite de tamanho no multer (ex.: 10 MB) configurável por env  |
+| Upload de conteúdo perigoso (ex.: executáveis, HTML)    | Allowlist de extensões no multer + download sempre como `attachment` + `X-Content-Type-Options: nosniff` |
 | `backend/storage` ausente no primeiro uso               | Criar a pasta na inicialização (`fs.mkdirSync(..., { recursive: true })`) e manter `.gitkeep` |
-| Path traversal no download                              | Nunca usar entrada do usuário como caminho; resolver sempre a partir de `storedName` do repositório |
+| Path traversal no download                              | Caminho sempre derivado do `storedName` do repositório, com validação de que o caminho resolvido permanece dentro do storage |
+| `owner` autodeclarado sem autenticação                  | Limitação conhecida desta fase: filtro `?owner=` é conveniência, não controle de acesso; evolução futura com middleware de identidade |
 
 ## 8. Plano de execução
 
@@ -153,15 +161,18 @@ backend diretamente.
 
 ### Etapa 1 — Camada de persistência (repositório)
 
-- Arquivos: `backend/src/repositories/documentRepository.js`
-- Conteúdo: array em memória + funções `save`, `findAll`, `findById`
+- Arquivos: `backend/src/repositories/documents.repository.js`
+- Conteúdo: array em memória + funções `save`, `findAll`, `findById`, além do
+  acesso físico ao storage (`ensureStorageDir`, `resolveFilePath`,
+  `removeOrphanFiles`)
 - Critérios de aceite:
   - Repositório não conhece Express nem multer
   - `findById` retorna `undefined` para id inexistente
+  - Métodos retornam cópias (estado interno não é mutável por fora)
 
 ### Etapa 2 — Regras de negócio (service)
 
-- Arquivos: `backend/src/services/documentService.js`
+- Arquivos: `backend/src/services/documents.service.js`
 - Conteúdo: criação de metadados (id, `uploadedAt`, `owner` padrão), listagem
   ordenada e resolução de documento para download (metadado + caminho físico)
 - Critérios de aceite:
@@ -171,9 +182,10 @@ backend diretamente.
 
 ### Etapa 3 — Controllers e rotas + configuração do multer
 
-- Arquivos: `backend/src/controllers/documentController.js`,
-  `backend/src/routes/documentRoutes.js`,
-  configuração do multer (`diskStorage` em `backend/storage`, limite de tamanho),
+- Arquivos: `backend/src/controllers/documents.controller.js`,
+  `backend/src/routes/documents.routes.js`,
+  `backend/src/middlewares/upload.js` (multer com `diskStorage` em
+  `backend/storage`, allowlist de extensões e limites),
   registro das rotas em `backend/src/app.js`
 - Critérios de aceite:
   - `POST /upload` responde `201` com metadados públicos; `400` sem arquivo
@@ -188,7 +200,8 @@ backend diretamente.
   usando o `app` exportado)
 - Critérios de aceite:
   - `npm test` cobre: upload com sucesso, upload sem arquivo (400),
-    listagem e download inexistente (404)
+    extensão não permitida (400), listagem ordenada, filtro por dono e
+    download inexistente (404)
 
 ### Etapa 5 — Serviço de API do frontend
 
@@ -201,10 +214,10 @@ backend diretamente.
 
 ### Etapa 6 — Componentes e página do frontend
 
-- Arquivos: `frontend/src/components/UploadForm.jsx`,
+- Arquivos: `frontend/src/components/UploadComponent.jsx`,
   `frontend/src/components/DocumentList.jsx`,
-  `frontend/src/pages/DocumentsPage.jsx`,
-  ajuste em `frontend/src/App.jsx` para renderizar a página
+  `frontend/src/components/DownloadButton.jsx`,
+  ajuste em `frontend/src/App.jsx` para montar a interface
 - Critérios de aceite:
   - Componentes funcionais com Hooks, sem duplicação
   - Upload atualiza a lista sem recarregar a página

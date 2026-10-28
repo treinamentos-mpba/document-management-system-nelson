@@ -30,16 +30,16 @@ export default function DocumentList({ documents }) {
         </tr>
       </thead>
       <tbody>
-        {documents.map((document) => (
-          <tr key={document.id}>
-            <td>{document.originalName}</td>
-            <td>{formatSize(document.size)}</td>
-            <td>{formatDate(document.uploadedAt)}</td>
-            <td>{document.owner}</td>
+        {documents.map((doc) => (
+          <tr key={doc.id}>
+            <td>{doc.originalName}</td>
+            <td>{formatSize(doc.size)}</td>
+            <td>{formatDate(doc.uploadedAt)}</td>
+            <td>{doc.owner}</td>
             <td>
               <DownloadButton
-                documentId={document.id}
-                originalName={document.originalName}
+                documentId={doc.id}
+                originalName={doc.originalName}
               />
             </td>
           </tr>
